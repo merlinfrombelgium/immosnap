@@ -58,11 +58,10 @@ class SnapPipeline(context: Context) {
             debugQuery = searchResult.query
 
             if (searchResult.candidates.isEmpty()) {
-                _state.value = PipelineState.Error(
-                    "No listings found nearby",
-                    DebugInfo(debugOcrText, debugAgencyName, debugRefNumber, debugLat, debugLng, debugAddress, debugQuery, debugLocationSource,
-                        searchResults = searchResult.rawResults, searchError = searchResult.error)
-                )
+                val debug = DebugInfo(debugOcrText, debugAgencyName, debugRefNumber, debugLat, debugLng, debugAddress, debugQuery, debugLocationSource,
+                    searchResults = searchResult.rawResults, searchError = searchResult.error)
+                DebugReporter.send(debug)
+                _state.value = PipelineState.Error("No listings found nearby", debug)
                 return
             }
 
@@ -72,10 +71,9 @@ class SnapPipeline(context: Context) {
 
             _state.value = PipelineState.Success(results)
         } catch (e: Exception) {
-            _state.value = PipelineState.Error(
-                e.message ?: "Unknown error",
-                DebugInfo(debugOcrText, debugAgencyName, debugRefNumber, debugLat, debugLng, debugAddress, debugQuery, debugLocationSource)
-            )
+            val debug = DebugInfo(debugOcrText, debugAgencyName, debugRefNumber, debugLat, debugLng, debugAddress, debugQuery, debugLocationSource)
+            DebugReporter.send(debug)
+            _state.value = PipelineState.Error(e.message ?: "Unknown error", debug)
         }
     }
 

@@ -37,14 +37,18 @@ class ListingSearchService {
             }
 
             val searchTerms = queryParts.joinToString(" ")
-            val prompt = """Find real estate listings for sale matching: $searchTerms
+            // Also use phone for search if available
+            val phoneHint = signInfo.phoneNumber?.let { " (phone: $it)" } ?: ""
+            val prompt = """Search for specific individual property listings for sale by the real estate agency "${signInfo.agencyName ?: "unknown"}"$phoneHint in ${address.city ?: "Belgium"} ${address.postalCode ?: ""}.
                 |
-                |Search on immoweb.be, zimmo.be, and immovlan.be.
+                |I need SPECIFIC PROPERTY LISTING PAGES (with classified/listing IDs in the URL), NOT general search result pages.
+                |For example: immoweb.be/en/classified/house/for-sale/dendermonde/9200/12345678
+                |NOT: immoweb.be/en/search/house/for-sale/dendermonde/9200
                 |
-                |For each listing found, respond with a JSON array (no markdown):
-                |[{"title": "...", "url": "...", "snippet": "..."}]
+                |Search on immoweb.be, zimmo.be, immovlan.be, and the agency website if available.
                 |
-                |Include the actual listing page URLs. If you find no specific listings, return [].
+                |Return a JSON array (no markdown fences): [{"title": "property description", "url": "direct listing URL", "snippet": "address and price if known"}]
+                |Return [] if no specific listings found.
             """.trimMargin()
 
             val requestBody = buildJsonObject {
@@ -64,7 +68,7 @@ class ListingSearchService {
 
             try {
                 val request = Request.Builder()
-                    .url("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${BuildConfig.GEMINI_API_KEY}")
+                    .url("https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${BuildConfig.GEMINI_API_KEY}")
                     .post(requestBody.toRequestBody("application/json".toMediaType()))
                     .build()
 

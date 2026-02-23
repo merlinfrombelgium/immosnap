@@ -9,7 +9,7 @@ import kotlinx.serialization.json.*
 class OcrService {
 
     private val model = GenerativeModel(
-        modelName = "gemini-2.5-flash",
+        modelName = "gemini-3-flash-preview",
         apiKey = BuildConfig.GEMINI_API_KEY
     )
 

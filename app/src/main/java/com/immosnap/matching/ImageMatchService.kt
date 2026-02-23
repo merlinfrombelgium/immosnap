@@ -15,7 +15,7 @@ import okhttp3.Request
 class ImageMatchService {
 
     private val model = GenerativeModel(
-        modelName = "gemini-2.5-flash",
+        modelName = "gemini-3-flash-preview",
         apiKey = BuildConfig.GEMINI_API_KEY
     )
     private val httpClient = OkHttpClient()

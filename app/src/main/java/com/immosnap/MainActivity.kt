@@ -1,6 +1,7 @@
 package com.immosnap
 
 import android.Manifest
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -25,12 +26,14 @@ class MainActivity : ComponentActivity() {
                     var permissionsGranted by remember { mutableStateOf(false) }
 
                     LaunchedEffect(Unit) {
-                        permissionLauncher.launch(
-                            arrayOf(
-                                Manifest.permission.CAMERA,
-                                Manifest.permission.ACCESS_FINE_LOCATION
-                            )
+                        val perms = mutableListOf(
+                            Manifest.permission.CAMERA,
+                            Manifest.permission.ACCESS_FINE_LOCATION
                         )
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            perms.add(Manifest.permission.ACCESS_MEDIA_LOCATION)
+                        }
+                        permissionLauncher.launch(perms.toTypedArray())
                     }
 
                     permissionsGranted = checkSelfPermission(Manifest.permission.CAMERA) ==

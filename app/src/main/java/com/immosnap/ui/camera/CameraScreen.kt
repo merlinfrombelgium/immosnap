@@ -3,6 +3,8 @@ package com.immosnap.ui.camera
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
+import android.provider.MediaStore
 import android.view.ViewGroup
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -45,9 +47,20 @@ fun CameraScreen(
             BitmapFactory.decodeStream(it)
         } ?: return@rememberLauncherForActivityResult
 
-        val exifLocation = context.contentResolver.openInputStream(uri)?.use { stream ->
-            val exif = ExifInterface(stream)
-            exif.latLong?.let { it[0] to it[1] }
+        val exifUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            MediaStore.setRequireOriginal(uri)
+        } else uri
+        val exifLocation = try {
+            context.contentResolver.openInputStream(exifUri)?.use { stream ->
+                val exif = ExifInterface(stream)
+                exif.latLong?.let { it[0] to it[1] }
+            }
+        } catch (e: Exception) {
+            // Fallback: try without setRequireOriginal
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                val exif = ExifInterface(stream)
+                exif.latLong?.let { it[0] to it[1] }
+            }
         }
 
         onGalleryPhoto(bitmap, exifLocation)

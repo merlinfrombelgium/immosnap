@@ -23,22 +23,45 @@ class SnapPipeline(context: Context) {
     val state = _state.asStateFlow()
 
     suspend fun process(photo: Bitmap, exifLocation: Pair<Double, Double>? = null) {
+        var debugLat: Double? = null
+        var debugLng: Double? = null
+        var debugAddress: String? = null
+        var debugQuery: String = ""
+        var debugLocationSource: String = "unknown"
+        var debugOcrText: String = ""
+        var debugAgencyName: String? = null
+        var debugRefNumber: String? = null
+
         try {
             _state.value = PipelineState.Processing("Reading sign...")
             val signInfo = ocrService.extractText(photo)
+            debugOcrText = signInfo.rawText
+            debugAgencyName = signInfo.agencyName
+            debugRefNumber = signInfo.referenceNumber
 
             _state.value = PipelineState.Processing("Finding address...")
-            val (lat, lng) = exifLocation ?: run {
+            val (lat, lng) = if (exifLocation != null) {
+                debugLocationSource = "EXIF"
+                exifLocation
+            } else {
+                debugLocationSource = "GPS"
                 val loc = locationService.getCurrentLocation()
                 loc.latitude to loc.longitude
             }
+            debugLat = lat
+            debugLng = lng
             val address = geocodingService.reverseGeocode(lat, lng)
+            debugAddress = listOfNotNull(address.street, address.postalCode, address.city).joinToString(", ")
 
             _state.value = PipelineState.Processing("Searching listings...")
-            val candidates = listingSearchService.search(signInfo, address)
+            val (candidates, query) = listingSearchService.search(signInfo, address)
+            debugQuery = query
 
             if (candidates.isEmpty()) {
-                _state.value = PipelineState.Error("No listings found nearby")
+                _state.value = PipelineState.Error(
+                    "No listings found nearby",
+                    DebugInfo(debugOcrText, debugAgencyName, debugRefNumber, debugLat, debugLng, debugAddress, debugQuery, debugLocationSource)
+                )
                 return
             }
 
@@ -47,7 +70,10 @@ class SnapPipeline(context: Context) {
 
             _state.value = PipelineState.Success(results)
         } catch (e: Exception) {
-            _state.value = PipelineState.Error(e.message ?: "Unknown error")
+            _state.value = PipelineState.Error(
+                e.message ?: "Unknown error",
+                DebugInfo(debugOcrText, debugAgencyName, debugRefNumber, debugLat, debugLng, debugAddress, debugQuery, debugLocationSource)
+            )
         }
     }
 

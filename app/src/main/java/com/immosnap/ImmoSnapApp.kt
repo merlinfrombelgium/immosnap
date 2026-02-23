@@ -55,7 +55,8 @@ fun ImmoSnapApp(viewModel: PipelineViewModel = viewModel()) {
                     onRetry = {
                         viewModel.reset()
                         navController.popBackStack("camera", inclusive = false)
-                    }
+                    },
+                    debugInfo = resultState.debugInfo
                 )
                 else -> {}
             }

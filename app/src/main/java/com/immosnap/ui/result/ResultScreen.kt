@@ -6,6 +6,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -13,22 +16,36 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.width
 import coil.compose.AsyncImage
 import com.immosnap.matching.MatchResult
+import com.immosnap.pipeline.DebugInfo
 
 @Composable
 fun ResultScreen(
     results: List<MatchResult>,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    debugInfo: DebugInfo? = null
 ) {
     val context = LocalContext.current
 
     if (results.isEmpty()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            item {
                 Text("No listings found", style = MaterialTheme.typography.headlineSmall)
-                Spacer(Modifier.height(16.dp))
-                Button(onClick = onRetry) { Text("Try Again") }
+                Spacer(Modifier.height(8.dp))
+                Button(onClick = onRetry, modifier = Modifier.fillMaxWidth()) { Text("Try Again") }
+            }
+            if (debugInfo != null) {
+                item {
+                    Spacer(Modifier.height(8.dp))
+                    Text("Debug Info", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(4.dp))
+                    DebugCard(debugInfo)
+                }
             }
         }
         return
@@ -112,5 +129,39 @@ private fun MatchCard(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun DebugCard(info: DebugInfo) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            DebugRow("Location source", info.locationSource)
+            DebugRow("GPS", if (info.lat != null && info.lng != null) "%.5f, %.5f".format(info.lat, info.lng) else "none")
+            DebugRow("Address", info.address ?: "none")
+            DebugRow("Agency", info.agencyName ?: "none")
+            DebugRow("Ref#", info.refNumber ?: "none")
+            DebugRow("Search query", info.searchQuery)
+            Spacer(Modifier.height(4.dp))
+            Text("OCR text:", style = MaterialTheme.typography.labelSmall)
+            Text(
+                info.ocrText.ifBlank { "(empty)" },
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace
+            )
+        }
+    }
+}
+
+@Composable
+private fun DebugRow(label: String, value: String) {
+    Row(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            "$label: ",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.width(120.dp)
+        )
+        Text(value, style = MaterialTheme.typography.labelSmall)
     }
 }

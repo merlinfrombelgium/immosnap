@@ -12,7 +12,7 @@ class ListingSearchService {
 
     private val client = OkHttpClient()
 
-    suspend fun search(signInfo: SignInfo, address: AddressInfo): List<ListingCandidate> =
+    suspend fun search(signInfo: SignInfo, address: AddressInfo): Pair<List<ListingCandidate>, String> =
         withContext(Dispatchers.IO) {
             val queryParts = mutableListOf<String>()
 
@@ -36,9 +36,9 @@ class ListingSearchService {
             val response = client.newCall(request).execute()
             val json = Json.parseToJsonElement(response.body!!.string()).jsonObject
 
-            val items = json["items"]?.jsonArray ?: return@withContext emptyList()
+            val items = json["items"]?.jsonArray ?: return@withContext emptyList<ListingCandidate>() to query
 
-            items.map { item ->
+            val candidates = items.map { item ->
                 val obj = item.jsonObject
                 val link = obj["link"]!!.jsonPrimitive.content
                 val source = when {
@@ -58,5 +58,6 @@ class ListingSearchService {
                     source = source
                 )
             }
+            candidates to query
         }
 }

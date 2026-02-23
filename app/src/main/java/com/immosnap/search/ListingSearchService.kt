@@ -18,6 +18,16 @@ class ListingSearchService {
         .readTimeout(60, TimeUnit.SECONDS)
         .build()
 
+    private fun detectSource(url: String, agencyDomain: String?): String = when {
+        agencyDomain != null && agencyDomain.substringBefore(".") in url -> "agency"
+        "immoweb" in url -> "immoweb"
+        "zimmo" in url -> "zimmo"
+        "immovlan" in url -> "immovlan"
+        "immolot" in url -> "immolot"
+        "spotto" in url -> "spotto"
+        else -> "other"
+    }
+
     data class SearchResult(
         val candidates: List<ListingCandidate>,
         val query: String,
@@ -37,18 +47,27 @@ class ListingSearchService {
             }
 
             val searchTerms = queryParts.joinToString(" ")
-            // Also use phone for search if available
+            // Derive agency website domain from name (e.g. "Immo LOT" -> "immolot.be")
+            val agencyDomain = signInfo.agencyName?.let {
+                it.replace(" ", "").lowercase() + ".be"
+            }
             val phoneHint = signInfo.phoneNumber?.let { " (phone: $it)" } ?: ""
-            val prompt = """Search for specific individual property listings for sale by the real estate agency "${signInfo.agencyName ?: "unknown"}"$phoneHint in ${address.city ?: "Belgium"} ${address.postalCode ?: ""}.
+            val agencySite = agencyDomain?.let { "\n|IMPORTANT: First search the agency's own website at $it for their current listings." } ?: ""
+            val prompt = """Find property listings for sale by "${signInfo.agencyName ?: "unknown"}"$phoneHint in ${address.city ?: "Belgium"} ${address.postalCode ?: ""}.
+                |$agencySite
+                |Search these sites in order of priority:
+                |1. ${agencyDomain ?: "the agency's own website"} (agency's own site - HIGHEST PRIORITY)
+                |2. immoweb.be
+                |3. zimmo.be
+                |4. immovlan.be
                 |
-                |I need SPECIFIC PROPERTY LISTING PAGES (with classified/listing IDs in the URL), NOT general search result pages.
-                |For example: immoweb.be/en/classified/house/for-sale/dendermonde/9200/12345678
-                |NOT: immoweb.be/en/search/house/for-sale/dendermonde/9200
+                |I need DIRECT LISTING PAGES with specific property IDs, not search result pages.
+                |Good: immolot.be/te-koop/7543047/huis-in-Dendermonde/
+                |Good: immoweb.be/en/classified/house/for-sale/dendermonde/9200/12345678
+                |Bad: immoweb.be/en/search/house/for-sale/dendermonde/9200
                 |
-                |Search on immoweb.be, zimmo.be, immovlan.be, and the agency website if available.
-                |
-                |Return a JSON array (no markdown fences): [{"title": "property description", "url": "direct listing URL", "snippet": "address and price if known"}]
-                |Return [] if no specific listings found.
+                |Return ONLY a JSON array (no markdown): [{"title": "description", "url": "direct listing URL", "snippet": "address and price"}]
+                |Return [] if nothing found.
             """.trimMargin()
 
             val requestBody = buildJsonObject {
@@ -94,6 +113,26 @@ class ListingSearchService {
 
                 rawResults.add("Gemini: ${textResponse.take(800)}")
 
+                // Try to parse JSON URLs from Gemini's text response
+                try {
+                    val jsonText = textResponse
+                        .replace("```json", "").replace("```", "").trim()
+                    if (jsonText.startsWith("[")) {
+                        val textResults = Json.parseToJsonElement(jsonText).jsonArray
+                        textResults.forEach { elem ->
+                            val obj = elem.jsonObject
+                            val url = obj["url"]?.jsonPrimitive?.content ?: return@forEach
+                            val title = obj["title"]?.jsonPrimitive?.content ?: ""
+                            val snippet = obj["snippet"]?.jsonPrimitive?.content ?: ""
+                            val source = detectSource(url, agencyDomain)
+                            if (source != "other") {
+                                candidates.add(ListingCandidate(title, url, snippet, null, source))
+                                rawResults.add("Text JSON: $title | $url")
+                            }
+                        }
+                    }
+                } catch (_: Exception) { /* text wasn't valid JSON, that's ok */ }
+
                 // Extract grounding chunks and resolve redirect URLs
                 val groundingChunks = json["candidates"]?.jsonArray
                     ?.firstOrNull()?.jsonObject
@@ -118,14 +157,7 @@ class ListingSearchService {
 
                     rawResults.add("$title | $realUrl")
 
-                    val source = when {
-                        "immoweb" in realUrl -> "immoweb"
-                        "zimmo" in realUrl -> "zimmo"
-                        "immovlan" in realUrl -> "immovlan"
-                        "immolot" in realUrl -> "immolot"
-                        "spotto" in realUrl -> "spotto"
-                        else -> "other"
-                    }
+                    val source = detectSource(realUrl, agencyDomain)
 
                     // Determine a better title from the URL or Gemini text
                     val betterTitle = when {

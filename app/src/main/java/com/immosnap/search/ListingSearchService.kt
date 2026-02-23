@@ -38,6 +38,7 @@ class ListingSearchService {
     suspend fun search(signInfo: SignInfo, address: AddressInfo): SearchResult =
         withContext(Dispatchers.IO) {
             val queryParts = mutableListOf<String>()
+            address.street?.let { queryParts.add(it) }
             address.postalCode?.let { queryParts.add(it) }
             address.city?.let { queryParts.add(it) }
             signInfo.agencyName?.let { queryParts.add(it) }
@@ -53,7 +54,8 @@ class ListingSearchService {
             }
             val phoneHint = signInfo.phoneNumber?.let { " (phone: $it)" } ?: ""
             val agencySite = agencyDomain?.let { "\n|IMPORTANT: First search the agency's own website at $it for their current listings." } ?: ""
-            val prompt = """Find property listings for sale by "${signInfo.agencyName ?: "unknown"}"$phoneHint in ${address.city ?: "Belgium"} ${address.postalCode ?: ""}.
+            val streetHint = address.street?.let { " on or near $it" } ?: ""
+            val prompt = """Find property listings for sale by "${signInfo.agencyName ?: "unknown"}"$phoneHint$streetHint in ${address.city ?: "Belgium"} ${address.postalCode ?: ""}.
                 |$agencySite
                 |Search these sites in order of priority:
                 |1. ${agencyDomain ?: "the agency's own website"} (agency's own site - HIGHEST PRIORITY)

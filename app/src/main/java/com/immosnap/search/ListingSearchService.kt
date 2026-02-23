@@ -16,12 +16,17 @@ class ListingSearchService {
         withContext(Dispatchers.IO) {
             val queryParts = mutableListOf<String>()
 
-            // Use postal code + city only (no street) for a wider search radius
+            // Location: prefer postal code + city, but use phone as fallback signal
             address.postalCode?.let { queryParts.add(it) }
             address.city?.let { queryParts.add(it) }
 
             signInfo.agencyName?.let { queryParts.add("\"$it\"") }
             signInfo.referenceNumber?.let { queryParts.add(it) }
+
+            // Phone number is highly specific — use it if we have no location
+            if (address.postalCode == null && address.city == null) {
+                signInfo.phoneNumber?.let { queryParts.add(it.replace(" ", "")) }
+            }
 
             val siteFilter = "site:immoweb.be OR site:zimmo.be OR site:immovlan.be"
             val query = "${queryParts.joinToString(" ")} $siteFilter"

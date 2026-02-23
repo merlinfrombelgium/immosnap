@@ -14,14 +14,25 @@ object SignInfoParser {
         val phone = PHONE_REGEX.find(text)?.value?.trim()
         val ref = REF_REGEX.find(text)?.groupValues?.get(1)
 
-        val agencyName = text.lines()
+        // Collect consecutive non-keyword, non-phone lines as the agency name
+        // e.g. "Immo\nLOT" → "Immo Lot"
+        val candidateLines = text.lines()
             .map { it.trim() }
-            .firstOrNull { line ->
+            .filter { line ->
                 line.isNotBlank()
                     && KEYWORDS.none { kw -> line.equals(kw, ignoreCase = true) }
                     && PHONE_REGEX.find(line) == null
                     && REF_REGEX.find(line) == null
+                    && line.length <= 40  // skip very long lines (addresses etc)
             }
+
+        // Take up to 2 consecutive short lines as the agency name
+        val agencyName = when {
+            candidateLines.isEmpty() -> null
+            candidateLines.size >= 2 && candidateLines[1].length <= 20 ->
+                "${candidateLines[0]} ${candidateLines[1]}".trim()
+            else -> candidateLines[0]
+        }
 
         return SignInfo(
             agencyName = agencyName,

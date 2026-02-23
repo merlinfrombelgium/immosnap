@@ -14,8 +14,14 @@ import java.util.concurrent.TimeUnit
 class ListingSearchService {
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(60, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
+        .connectTimeout(90, TimeUnit.SECONDS)
+        .readTimeout(90, TimeUnit.SECONDS)
+        .build()
+
+    private val quickClient = OkHttpClient.Builder()
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(5, TimeUnit.SECONDS)
+        .followRedirects(true)
         .build()
 
     private fun detectSource(url: String, agencyDomain: String?): String = when {
@@ -131,7 +137,7 @@ class ListingSearchService {
                                 // Validate URL actually exists (Gemini often hallucinates URLs)
                                 val valid = try {
                                     val headReq = Request.Builder().url(url).head().build()
-                                    val headResp = client.newCall(headReq).execute()
+                                    val headResp = quickClient.newCall(headReq).execute()
                                     val code = headResp.code
                                     headResp.close()
                                     code in 200..399
@@ -161,7 +167,7 @@ class ListingSearchService {
                     // Resolve the redirect URL to get the real listing URL
                     val realUrl = try {
                         val redirectReq = Request.Builder().url(redirectUri).build()
-                        val redirectResp = client.newCall(redirectReq).execute()
+                        val redirectResp = quickClient.newCall(redirectReq).execute()
                         val resolved = redirectResp.request.url.toString()
                         redirectResp.close()
                         resolved

@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -18,7 +20,7 @@ android {
 
         val localProps = rootProject.file("local.properties")
         if (localProps.exists()) {
-            val props = java.util.Properties().apply { load(localProps.inputStream()) }
+            val props = Properties().apply { load(localProps.inputStream()) }
             buildConfigField("String", "MAPS_API_KEY", "\"${props["MAPS_API_KEY"] ?: ""}\"")
             buildConfigField("String", "SEARCH_API_KEY", "\"${props["SEARCH_API_KEY"] ?: ""}\"")
             buildConfigField("String", "SEARCH_ENGINE_ID", "\"${props["SEARCH_ENGINE_ID"] ?: ""}\"")

@@ -10,7 +10,7 @@
         android:allowBackup="true"
         android:label="ImmoSnap"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Material3.DynamicColors.DayNight">
+        android:theme="@style/Theme.ImmoSnap">
         <activity
             android:name=".MainActivity"
             android:exported="true"

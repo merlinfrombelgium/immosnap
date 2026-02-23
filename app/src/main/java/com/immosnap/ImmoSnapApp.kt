@@ -30,9 +30,10 @@ fun ImmoSnapApp(viewModel: PipelineViewModel = viewModel()) {
 
     NavHost(navController = navController, startDestination = "camera") {
         composable("camera") {
-            CameraScreen(onPhotoTaken = { bitmap ->
-                viewModel.onPhotoTaken(bitmap)
-            })
+            CameraScreen(
+                onPhotoTaken = { bitmap -> viewModel.onPhotoTaken(bitmap) },
+                onGalleryPhoto = { bitmap, exifLocation -> viewModel.onGalleryPhotoSelected(bitmap, exifLocation) }
+            )
         }
         composable("processing") {
             val processingState = state

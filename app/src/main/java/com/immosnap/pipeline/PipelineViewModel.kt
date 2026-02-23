@@ -12,18 +12,28 @@ class PipelineViewModel(application: Application) : AndroidViewModel(application
     val state = pipeline.state
 
     private var capturedPhoto: Bitmap? = null
+    private var capturedExifLocation: Pair<Double, Double>? = null
 
     fun onPhotoTaken(bitmap: Bitmap) {
         capturedPhoto = bitmap
+        capturedExifLocation = null
         viewModelScope.launch {
             pipeline.process(bitmap)
+        }
+    }
+
+    fun onGalleryPhotoSelected(bitmap: Bitmap, exifLocation: Pair<Double, Double>?) {
+        capturedPhoto = bitmap
+        capturedExifLocation = exifLocation
+        viewModelScope.launch {
+            pipeline.process(bitmap, exifLocation)
         }
     }
 
     fun retry() {
         capturedPhoto?.let { photo ->
             pipeline.reset()
-            viewModelScope.launch { pipeline.process(photo) }
+            viewModelScope.launch { pipeline.process(photo, capturedExifLocation) }
         }
     }
 

@@ -22,14 +22,17 @@ class SnapPipeline(context: Context) {
     private val _state = MutableStateFlow<PipelineState>(PipelineState.Idle)
     val state = _state.asStateFlow()
 
-    suspend fun process(photo: Bitmap) {
+    suspend fun process(photo: Bitmap, exifLocation: Pair<Double, Double>? = null) {
         try {
             _state.value = PipelineState.Processing("Reading sign...")
             val signInfo = ocrService.extractText(photo)
 
             _state.value = PipelineState.Processing("Finding address...")
-            val location = locationService.getCurrentLocation()
-            val address = geocodingService.reverseGeocode(location.latitude, location.longitude)
+            val (lat, lng) = exifLocation ?: run {
+                val loc = locationService.getCurrentLocation()
+                loc.latitude to loc.longitude
+            }
+            val address = geocodingService.reverseGeocode(lat, lng)
 
             _state.value = PipelineState.Processing("Searching listings...")
             val candidates = listingSearchService.search(signInfo, address)

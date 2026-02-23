@@ -113,7 +113,7 @@ class ListingSearchService {
 
                 rawResults.add("Gemini: ${textResponse.take(800)}")
 
-                // Try to parse JSON URLs from Gemini's text response
+                // Try to parse JSON URLs from Gemini's text response, validate they exist
                 try {
                     val jsonText = textResponse
                         .replace("```json", "").replace("```", "").trim()
@@ -126,8 +126,20 @@ class ListingSearchService {
                             val snippet = obj["snippet"]?.jsonPrimitive?.content ?: ""
                             val source = detectSource(url, agencyDomain)
                             if (source != "other") {
-                                candidates.add(ListingCandidate(title, url, snippet, null, source))
-                                rawResults.add("Text JSON: $title | $url")
+                                // Validate URL actually exists (Gemini often hallucinates URLs)
+                                val valid = try {
+                                    val headReq = Request.Builder().url(url).head().build()
+                                    val headResp = client.newCall(headReq).execute()
+                                    val code = headResp.code
+                                    headResp.close()
+                                    code in 200..399
+                                } catch (_: Exception) { false }
+                                if (valid) {
+                                    candidates.add(ListingCandidate(title, url, snippet, null, source))
+                                    rawResults.add("Text JSON (verified): $title | $url")
+                                } else {
+                                    rawResults.add("Text JSON (INVALID): $title | $url")
+                                }
                             }
                         }
                     }

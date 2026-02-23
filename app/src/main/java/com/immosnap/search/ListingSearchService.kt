@@ -16,7 +16,7 @@ class ListingSearchService {
         withContext(Dispatchers.IO) {
             val queryParts = mutableListOf<String>()
 
-            address.street?.let { queryParts.add(it) }
+            // Use postal code + city only (no street) for a wider search radius
             address.postalCode?.let { queryParts.add(it) }
             address.city?.let { queryParts.add(it) }
 
@@ -30,7 +30,7 @@ class ListingSearchService {
                 "?q=${java.net.URLEncoder.encode(query, "UTF-8")}" +
                 "&key=${BuildConfig.SEARCH_API_KEY}" +
                 "&cx=${BuildConfig.SEARCH_ENGINE_ID}" +
-                "&num=5"
+                "&num=10"
 
             val request = Request.Builder().url(url).build()
             val response = client.newCall(request).execute()

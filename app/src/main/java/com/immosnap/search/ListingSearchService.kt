@@ -84,56 +84,73 @@ class ListingSearchService {
                 val candidates = mutableListOf<ListingCandidate>()
                 val rawResults = mutableListOf<String>()
 
-                // Extract grounding chunks (these have real URLs)
+                // Get text response from Gemini
+                val textResponse = json["candidates"]?.jsonArray
+                    ?.firstOrNull()?.jsonObject
+                    ?.get("content")?.jsonObject
+                    ?.get("parts")?.jsonArray
+                    ?.mapNotNull { it.jsonObject["text"]?.jsonPrimitive?.content }
+                    ?.joinToString("\n") ?: ""
+
+                rawResults.add("Gemini: ${textResponse.take(800)}")
+
+                // Extract grounding chunks and resolve redirect URLs
                 val groundingChunks = json["candidates"]?.jsonArray
                     ?.firstOrNull()?.jsonObject
                     ?.get("groundingMetadata")?.jsonObject
                     ?.get("groundingChunks")?.jsonArray
 
                 groundingChunks?.forEach { chunk ->
-                    val web = chunk.jsonObject["web"]?.jsonObject
-                    if (web != null) {
-                        val title = web["title"]?.jsonPrimitive?.content ?: ""
-                        val uri = web["uri"]?.jsonPrimitive?.content ?: ""
-                        rawResults.add("$title | $uri")
+                    val web = chunk.jsonObject["web"]?.jsonObject ?: return@forEach
+                    val title = web["title"]?.jsonPrimitive?.content ?: ""
+                    val redirectUri = web["uri"]?.jsonPrimitive?.content ?: ""
 
-                        // Resolve redirect URLs to get the actual domain
-                        val source = when {
-                            "immoweb" in title.lowercase() || "immoweb" in uri -> "immoweb"
-                            "zimmo" in title.lowercase() || "zimmo" in uri -> "zimmo"
-                            "immovlan" in title.lowercase() || "immovlan" in uri -> "immovlan"
-                            "immolot" in title.lowercase() || "immolot" in uri -> "immolot"
-                            else -> "other"
-                        }
+                    // Resolve the redirect URL to get the real listing URL
+                    val realUrl = try {
+                        val redirectReq = Request.Builder().url(redirectUri).build()
+                        val redirectResp = client.newCall(redirectReq).execute()
+                        val resolved = redirectResp.request.url.toString()
+                        redirectResp.close()
+                        resolved
+                    } catch (_: Exception) {
+                        redirectUri
+                    }
 
-                        // Only include real estate site results
-                        if (source != "other") {
-                            candidates.add(
-                                ListingCandidate(
-                                    title = title,
-                                    url = uri,
-                                    snippet = "",
-                                    thumbnailUrl = null,
-                                    source = source
-                                )
+                    rawResults.add("$title | $realUrl")
+
+                    val source = when {
+                        "immoweb" in realUrl -> "immoweb"
+                        "zimmo" in realUrl -> "zimmo"
+                        "immovlan" in realUrl -> "immovlan"
+                        "immolot" in realUrl -> "immolot"
+                        "spotto" in realUrl -> "spotto"
+                        else -> "other"
+                    }
+
+                    // Determine a better title from the URL or Gemini text
+                    val betterTitle = when {
+                        realUrl.contains("/classified/") || realUrl.contains("/te-koop/") ->
+                            "$title - ${realUrl.substringAfterLast("/").replace("-", " ").take(60)}"
+                        else -> title
+                    }
+
+                    if (source != "other") {
+                        candidates.add(
+                            ListingCandidate(
+                                title = betterTitle,
+                                url = realUrl,
+                                snippet = "",
+                                thumbnailUrl = null,
+                                source = source
                             )
-                        }
+                        )
                     }
                 }
 
-                // Also try to parse the text response for any additional URLs
-                val textResponse = json["candidates"]?.jsonArray
-                    ?.firstOrNull()?.jsonObject
-                    ?.get("content")?.jsonObject
-                    ?.get("parts")?.jsonArray
-                    ?.firstOrNull()?.jsonObject
-                    ?.get("text")?.jsonPrimitive?.content
+                // Deduplicate by URL
+                val uniqueCandidates = candidates.distinctBy { it.url }
 
-                if (textResponse != null) {
-                    rawResults.add(0, "Gemini response: ${textResponse.take(500)}")
-                }
-
-                SearchResult(candidates, searchTerms, rawResults)
+                SearchResult(uniqueCandidates, searchTerms, rawResults)
             } catch (e: Exception) {
                 SearchResult(emptyList(), searchTerms, emptyList(), "Search error: ${e.message}")
             }

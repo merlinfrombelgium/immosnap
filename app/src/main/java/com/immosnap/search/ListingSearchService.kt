@@ -12,7 +12,14 @@ class ListingSearchService {
 
     private val client = OkHttpClient()
 
-    suspend fun search(signInfo: SignInfo, address: AddressInfo): Pair<List<ListingCandidate>, String> =
+    data class SearchResult(
+        val candidates: List<ListingCandidate>,
+        val query: String,
+        val rawResults: List<String>,
+        val error: String? = null
+    )
+
+    suspend fun search(signInfo: SignInfo, address: AddressInfo): SearchResult =
         withContext(Dispatchers.IO) {
             val queryParts = mutableListOf<String>()
 
@@ -28,8 +35,8 @@ class ListingSearchService {
                 signInfo.phoneNumber?.let { queryParts.add(it.replace(" ", "")) }
             }
 
-            val siteFilter = "site:immoweb.be OR site:zimmo.be OR site:immovlan.be"
-            val query = "${queryParts.joinToString(" ")} $siteFilter"
+            // No site: filter needed — CSE is already restricted to immo sites
+            val query = queryParts.joinToString(" ")
 
             val url = "https://www.googleapis.com/customsearch/v1" +
                 "?q=${java.net.URLEncoder.encode(query, "UTF-8")}" +
@@ -39,9 +46,28 @@ class ListingSearchService {
 
             val request = Request.Builder().url(url).build()
             val response = client.newCall(request).execute()
-            val json = Json.parseToJsonElement(response.body!!.string()).jsonObject
+            val body = response.body!!.string()
+            val json = Json.parseToJsonElement(body).jsonObject
 
-            val items = json["items"]?.jsonArray ?: return@withContext emptyList<ListingCandidate>() to query
+            // Check for API errors
+            val apiError = json["error"]?.jsonObject?.get("message")?.jsonPrimitive?.content
+            if (apiError != null) {
+                return@withContext SearchResult(emptyList(), query, emptyList(), "API error: $apiError")
+            }
+
+            val items = json["items"]?.jsonArray
+            if (items == null) {
+                val totalResults = json["searchInformation"]?.jsonObject
+                    ?.get("totalResults")?.jsonPrimitive?.content ?: "0"
+                return@withContext SearchResult(emptyList(), query, listOf("Total results: $totalResults"), null)
+            }
+
+            val rawResults = items.map { item ->
+                val obj = item.jsonObject
+                val title = obj["title"]?.jsonPrimitive?.content ?: ""
+                val link = obj["link"]?.jsonPrimitive?.content ?: ""
+                "$title | $link"
+            }
 
             val candidates = items.map { item ->
                 val obj = item.jsonObject
@@ -63,6 +89,6 @@ class ListingSearchService {
                     source = source
                 )
             }
-            candidates to query
+            SearchResult(candidates, query, rawResults)
         }
 }

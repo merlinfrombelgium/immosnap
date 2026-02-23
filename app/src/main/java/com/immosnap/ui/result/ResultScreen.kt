@@ -142,6 +142,21 @@ private fun DebugCard(info: DebugInfo) {
             DebugRow("Agency", info.agencyName ?: "none")
             DebugRow("Ref#", info.refNumber ?: "none")
             DebugRow("Search query", info.searchQuery)
+            info.searchError?.let {
+                Spacer(Modifier.height(4.dp))
+                Text("Search error: $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+            }
+            if (info.searchResults.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                Text("Search results:", style = MaterialTheme.typography.labelSmall)
+                info.searchResults.forEachIndexed { i, result ->
+                    Text(
+                        "${i + 1}. $result",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
             Spacer(Modifier.height(4.dp))
             Text("OCR text:", style = MaterialTheme.typography.labelSmall)
             Text(

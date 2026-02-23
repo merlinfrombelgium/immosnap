@@ -17,5 +17,7 @@ data class DebugInfo(
     val lng: Double?,
     val address: String?,
     val searchQuery: String,
-    val locationSource: String
+    val locationSource: String,
+    val searchResults: List<String> = emptyList(),
+    val searchError: String? = null
 )

@@ -54,18 +54,20 @@ class SnapPipeline(context: Context) {
             debugAddress = listOfNotNull(address.street, address.postalCode, address.city).joinToString(", ")
 
             _state.value = PipelineState.Processing("Searching listings...")
-            val (candidates, query) = listingSearchService.search(signInfo, address)
-            debugQuery = query
+            val searchResult = listingSearchService.search(signInfo, address)
+            debugQuery = searchResult.query
 
-            if (candidates.isEmpty()) {
+            if (searchResult.candidates.isEmpty()) {
                 _state.value = PipelineState.Error(
                     "No listings found nearby",
-                    DebugInfo(debugOcrText, debugAgencyName, debugRefNumber, debugLat, debugLng, debugAddress, debugQuery, debugLocationSource)
+                    DebugInfo(debugOcrText, debugAgencyName, debugRefNumber, debugLat, debugLng, debugAddress, debugQuery, debugLocationSource,
+                        searchResults = searchResult.rawResults, searchError = searchResult.error)
                 )
                 return
             }
 
             _state.value = PipelineState.Processing("Matching photos...")
+            val candidates = searchResult.candidates
             val results = imageMatchService.rankCandidates(photo, candidates)
 
             _state.value = PipelineState.Success(results)

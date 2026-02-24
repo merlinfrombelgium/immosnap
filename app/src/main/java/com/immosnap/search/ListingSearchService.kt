@@ -143,7 +143,7 @@ class ListingSearchService {
                                     code in 200..399
                                 } catch (_: Exception) { false }
                                 if (valid) {
-                                    candidates.add(ListingCandidate(title, url, snippet, null, source))
+                                    candidates.add(ListingCandidate(title = title, url = url, snippet = snippet, source = source))
                                     rawResults.add("Text JSON (verified): $title | $url")
                                 } else {
                                     rawResults.add("Text JSON (INVALID): $title | $url")
@@ -192,7 +192,6 @@ class ListingSearchService {
                                 title = betterTitle,
                                 url = realUrl,
                                 snippet = "",
-                                thumbnailUrl = null,
                                 source = source
                             )
                         )

@@ -67,7 +67,7 @@ class SnapPipeline(context: Context) {
 
             _state.value = PipelineState.Processing("Matching photos...")
             val candidates = searchResult.candidates
-            val results = imageMatchService.rankCandidates(photo, candidates)
+            val results = imageMatchService.rankCandidates(photo, candidates, address)
 
             _state.value = PipelineState.Success(results)
         } catch (e: Exception) {

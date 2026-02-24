@@ -25,122 +25,177 @@ class ImageMatchService {
         .followRedirects(true)
         .build()
 
-    /**
-     * For each candidate, scrape og:image from the listing page,
-     * then use Gemini vision to compare with the user's photo.
-     * Returns candidates with thumbnailUrl populated and real confidence scores.
-     */
     suspend fun rankCandidates(
         photo: Bitmap,
         candidates: List<ListingCandidate>
     ): List<MatchResult> = withContext(Dispatchers.IO) {
         if (candidates.isEmpty()) return@withContext emptyList()
 
-        // Step 1: Fetch og:image for each candidate
+        // Step 1: Scrape images from each listing page
         val enriched = candidates.map { candidate ->
-            val ogImage = try {
-                scrapeOgImage(candidate.url)
-            } catch (_: Exception) { null }
-            candidate.copy(thumbnailUrl = ogImage) to ogImage
-        }
-
-        // Step 2: Download thumbnail bitmaps
-        val withImages = enriched.mapNotNull { (candidate, ogImage) ->
-            if (ogImage != null) {
-                try {
-                    val bitmap = downloadImage(ogImage)
-                    candidate to bitmap
-                } catch (_: Exception) {
-                    candidate to null
-                }
-            } else {
-                candidate to null
+            try {
+                val images = scrapeListingImages(candidate.url)
+                candidate.copy(
+                    imageUrls = images,
+                    thumbnailUrl = images.firstOrNull()
+                )
+            } catch (_: Exception) {
+                candidate
             }
         }
 
-        // Step 3: If we have any images, compare with Gemini
-        val candidatesWithBitmaps = withImages.filter { it.second != null }
-        if (candidatesWithBitmaps.isEmpty()) {
-            return@withContext withImages.map { (candidate, _) ->
-                MatchResult(candidate, 0.5f, "No listing photo available")
+        // Step 2: For each candidate, download up to 5 images for gallery + matching
+        val candidateImages = enriched.map { candidate ->
+            val bitmaps = candidate.imageUrls.take(5).mapNotNull { url ->
+                try { downloadImage(url) } catch (_: Exception) { null }
+            }
+            candidate to bitmaps
+        }
+
+        // Step 3: If any candidate has images, do Gemini comparison
+        val hasAnyImages = candidateImages.any { it.second.isNotEmpty() }
+        if (!hasAnyImages) {
+            return@withContext enriched.map {
+                MatchResult(it, 0.5f, "No listing photos available")
             }
         }
 
         try {
             val response = model.generateContent(
                 content {
-                    text("USER'S PHOTO of the property (taken from the street):")
+                    text("USER'S PHOTO (taken from the street, may show the building's facade):")
                     image(photo)
-                    withImages.forEachIndexed { index, (candidate, bitmap) ->
-                        text("Listing ${index + 1}: ${candidate.title} (${candidate.url})")
-                        if (bitmap != null) {
-                            image(bitmap)
+                    text("---")
+                    candidateImages.forEachIndexed { idx, (candidate, bitmaps) ->
+                        text("LISTING ${idx + 1}: ${candidate.title} (${candidate.url})")
+                        if (bitmaps.isNotEmpty()) {
+                            bitmaps.forEachIndexed { imgIdx, bitmap ->
+                                text("Image ${imgIdx + 1}/${bitmaps.size}:")
+                                image(bitmap)
+                            }
                         } else {
-                            text("[no image available]")
+                            text("[no images available]")
                         }
+                        text("---")
                     }
                     text(
-                        """Compare the user's street photo with each listing photo.
-                        |Determine which listings show the SAME BUILDING.
-                        |Compare: facade shape, roof style, windows, door, colors, materials, architectural details.
-                        |Note: the user's photo may show the building from a different angle or distance.
+                        """Compare the user's street photo with ALL listing images above.
+                        |Determine which listings show the SAME BUILDING as the user's photo.
+                        |Look across ALL images for each listing - one might show the exterior/facade.
+                        |Compare: facade shape, roof style, windows, door, colors, materials, architectural style.
+                        |The user's photo angle may differ from listing photos.
                         |
                         |Respond ONLY with a JSON array (no markdown):
-                        |[{"index": 1, "confidence": 0.95, "reasoning": "Same red brick facade, matching bay window"}]
-                        |Index is 1-based. Order by confidence descending.
-                        |Use 0.0-1.0 scale. Be strict: only high confidence if clearly the same building.
+                        |[{"index": 1, "confidence": 0.95, "best_image": 2, "reasoning": "Image 2 shows matching red brick facade"}]
+                        |index = 1-based listing number. best_image = which image (1-based) best matches.
+                        |Order by confidence descending. Use 0.0-1.0 scale. Be strict.
                         """.trimMargin()
                     )
                 }
             )
 
-            val text = response.text ?: return@withContext withImages.map { (c, _) ->
-                MatchResult(c, 0.5f, "Gemini returned no response")
+            val text = response.text ?: return@withContext enriched.map {
+                MatchResult(it, 0.5f, "Gemini returned no response")
             }
 
             val jsonText = text.replace("```json", "").replace("```", "").trim()
                 .let { s -> s.substringAfter("[").substringBefore("]").let { "[$it]" } }
             val results = Json.parseToJsonElement(jsonText).jsonArray
 
-            // Build a map of index -> (confidence, reasoning)
-            val scoreMap = mutableMapOf<Int, Pair<Float, String>>()
+            val scoreMap = mutableMapOf<Int, Triple<Float, Int, String>>()
             results.forEach { elem ->
                 val obj = elem.jsonObject
                 val idx = obj["index"]?.jsonPrimitive?.int?.minus(1) ?: return@forEach
                 val conf = obj["confidence"]?.jsonPrimitive?.float ?: 0f
+                val bestImg = obj["best_image"]?.jsonPrimitive?.int ?: 1
                 val reason = obj["reasoning"]?.jsonPrimitive?.content ?: ""
-                scoreMap[idx] = conf to reason
+                scoreMap[idx] = Triple(conf, bestImg, reason)
             }
 
-            withImages.mapIndexed { index, (candidate, _) ->
-                val (conf, reason) = scoreMap[index] ?: (0.1f to "Not evaluated")
-                MatchResult(candidate, conf, reason)
+            enriched.mapIndexed { index, candidate ->
+                val (conf, bestImg, reason) = scoreMap[index] ?: Triple(0.1f, 1, "Not evaluated")
+                // Reorder images to put the best matching one first
+                val reordered = if (bestImg > 1 && bestImg <= candidate.imageUrls.size) {
+                    val best = candidate.imageUrls[bestImg - 1]
+                    listOf(best) + candidate.imageUrls.filterIndexed { i, _ -> i != bestImg - 1 }
+                } else candidate.imageUrls
+                MatchResult(
+                    candidate.copy(imageUrls = reordered, thumbnailUrl = reordered.firstOrNull()),
+                    conf, reason
+                )
             }.sortedByDescending { it.confidence }
         } catch (e: Exception) {
-            withImages.map { (c, _) ->
-                MatchResult(c, 0.5f, "Match error: ${e.message?.take(100)}")
+            enriched.map {
+                MatchResult(it, 0.5f, "Match error: ${e.message?.take(100)}")
             }
         }
     }
 
-    private fun scrapeOgImage(url: String): String? {
+    /**
+     * Scrape listing images from a property page.
+     * Tries og:image first, then looks for common image patterns.
+     */
+    private fun scrapeListingImages(url: String): List<String> {
         val request = Request.Builder()
             .url(url)
-            .header("User-Agent", "Mozilla/5.0 (Android; Mobile)")
+            .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0")
             .build()
         val response = httpClient.newCall(request).execute()
-        val html = response.body?.string() ?: return null
+        val html = response.body?.string() ?: return emptyList()
         response.close()
 
-        // Look for og:image meta tag
+        val images = mutableListOf<String>()
+        val seen = mutableSetOf<String>()
+
+        fun addImage(imgUrl: String) {
+            val resolved = when {
+                imgUrl.startsWith("//") -> "https:$imgUrl"
+                imgUrl.startsWith("/") -> {
+                    val base = url.substringBefore("/", url).let {
+                        Regex("https?://[^/]+").find(url)?.value ?: return
+                    }
+                    "$base$imgUrl"
+                }
+                else -> imgUrl
+            }
+            // Filter out tiny images, icons, logos
+            if (resolved !in seen && !resolved.contains("logo") && !resolved.contains("icon")
+                && !resolved.contains("sprite") && !resolved.contains("avatar")) {
+                seen.add(resolved)
+                images.add(resolved)
+            }
+        }
+
+        // 1. og:image
         val ogPattern = Regex("""<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
-        ogPattern.find(html)?.groupValues?.get(1)?.let { return it }
-
-        // Try reverse order (content before property)
+        ogPattern.find(html)?.groupValues?.get(1)?.let { addImage(it) }
         val ogPattern2 = Regex("""<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']""", RegexOption.IGNORE_CASE)
-        ogPattern2.find(html)?.groupValues?.get(1)?.let { return it }
+        ogPattern2.find(html)?.groupValues?.get(1)?.let { addImage(it) }
 
-        return null
+        // 2. Look for large images in common listing patterns
+        // Match img tags with src containing typical listing image URL patterns
+        val imgPattern = Regex("""<img[^>]+src=["']([^"']+)["'][^>]*>""", RegexOption.IGNORE_CASE)
+        imgPattern.findAll(html).forEach { match ->
+            val src = match.groupValues[1]
+            // Listing sites typically have images with dimensions or "photo" in URL
+            if (src.contains("photo") || src.contains("image") || src.contains("/pic")
+                || src.contains("property") || src.contains("classified")
+                || src.contains("media") || src.contains("upload")) {
+                addImage(src)
+            }
+        }
+
+        // 3. JSON-LD or data attributes with image arrays
+        val jsonImgPattern = Regex(""""(https?://[^"]+\.(?:jpg|jpeg|png|webp)[^"]*)"""", RegexOption.IGNORE_CASE)
+        jsonImgPattern.findAll(html).forEach { match ->
+            val src = match.groupValues[1]
+            if (src.contains("photo") || src.contains("image") || src.contains("media")
+                || src.contains("property") || src.contains("classified") || src.contains("upload")) {
+                addImage(src)
+            }
+        }
+
+        return images.take(8)
     }
 
     private fun downloadImage(url: String): Bitmap {

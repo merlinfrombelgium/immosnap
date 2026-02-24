@@ -5,9 +5,14 @@ import android.net.Uri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -16,7 +21,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import coil.compose.AsyncImage
 import com.immosnap.matching.MatchResult
 import com.immosnap.pipeline.DebugInfo
@@ -95,37 +103,81 @@ private fun MatchCard(
     highlighted: Boolean,
     onClick: () -> Unit
 ) {
+    val images = result.candidate.imageUrls
+
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
         colors = if (highlighted) CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.primaryContainer
         ) else CardDefaults.cardColors()
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            result.candidate.thumbnailUrl?.let { url ->
-                AsyncImage(
-                    model = url,
-                    contentDescription = "Listing photo",
-                    modifier = Modifier.fillMaxWidth().height(160.dp)
-                )
-                Spacer(Modifier.height(8.dp))
+        Column {
+            if (images.isNotEmpty()) {
+                Box {
+                    val pagerState = rememberPagerState(pageCount = { images.size })
+                    HorizontalPager(
+                        state = pagerState,
+                        modifier = Modifier.fillMaxWidth().height(200.dp)
+                    ) { page ->
+                        AsyncImage(
+                            model = images[page],
+                            contentDescription = "Listing photo ${page + 1}",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                    // Page indicator dots
+                    if (images.size > 1) {
+                        Row(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            repeat(images.size) { index ->
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(
+                                            if (index == pagerState.currentPage)
+                                                MaterialTheme.colorScheme.primary
+                                            else
+                                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                                        )
+                                )
+                            }
+                        }
+                    }
+                }
             }
-            Text(
-                result.candidate.title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-            Text(result.candidate.snippet, style = MaterialTheme.typography.bodySmall)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "${result.candidate.source} • ${(result.confidence * 100).toInt()}% match",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            if (highlighted) {
-                Spacer(Modifier.height(8.dp))
-                Button(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
-                    Text("Open Listing")
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    result.candidate.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                if (result.candidate.snippet.isNotBlank()) {
+                    Text(result.candidate.snippet, style = MaterialTheme.typography.bodySmall)
+                }
+                if (result.reasoning.isNotBlank() && result.reasoning != "Not evaluated") {
+                    Text(
+                        result.reasoning,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "${result.candidate.source} • ${(result.confidence * 100).toInt()}% match",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (highlighted) {
+                    Spacer(Modifier.height(8.dp))
+                    Button(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+                        Text("Open Listing")
+                    }
                 }
             }
         }

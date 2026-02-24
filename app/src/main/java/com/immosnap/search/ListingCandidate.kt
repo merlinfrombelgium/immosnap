@@ -10,6 +10,7 @@ data class ListingCandidate(
     val title: String,
     val url: String,
     val snippet: String,
-    val thumbnailUrl: String?,
+    val thumbnailUrl: String? = null,
+    val imageUrls: List<String> = emptyList(),
     val source: String
 )

@@ -18,9 +18,12 @@ class ListingSearchService {
         .readTimeout(90, TimeUnit.SECONDS)
         .build()
 
+    // Used for follow-up HEAD/GET calls (redirect resolution, URL validation).
+    // Bumped from 5s -> 12s: immoweb/zimmo frequently take >5s to respond under load,
+    // so a tighter budget was silently dropping valid listings as "invalid."
     private val quickClient = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(5, TimeUnit.SECONDS)
+        .connectTimeout(12, TimeUnit.SECONDS)
+        .readTimeout(12, TimeUnit.SECONDS)
         .followRedirects(true)
         .build()
 
@@ -41,6 +44,44 @@ class ListingSearchService {
         val error: String? = null
     )
 
+    /**
+     * Search with automatic fallback: if the initial narrow search (address + agency) returns
+     * zero candidates, retry with progressively looser context until something sticks or we
+     * run out of strategies. This exists because Gemini search grounding sometimes has zero
+     * recall on Belgian long-tail listings when the prompt is over-specified.
+     */
+    suspend fun searchWithFallback(signInfo: SignInfo, address: AddressInfo): SearchResult =
+        withContext(Dispatchers.IO) {
+            val first = search(signInfo, address)
+            if (first.candidates.isNotEmpty()) return@withContext first
+
+            // Fallback 1: drop the street but keep city + postal + agency. Useful when the GPS
+            // resolved the wrong house number but the neighborhood is still right.
+            if (address.street != null) {
+                val broader = address.copy(street = null)
+                val second = search(signInfo, broader)
+                if (second.candidates.isNotEmpty()) {
+                    return@withContext second.copy(
+                        rawResults = listOf("--- fallback 1: dropped street ---") + first.rawResults + second.rawResults
+                    )
+                }
+            }
+
+            // Fallback 2: drop the agency name — OCR may have misread it — and lean on address only.
+            if (signInfo.agencyName != null && (address.postalCode != null || address.city != null)) {
+                val nameless = signInfo.copy(agencyName = null)
+                val third = search(nameless, address)
+                if (third.candidates.isNotEmpty()) {
+                    return@withContext third.copy(
+                        rawResults = listOf("--- fallback 2: dropped agency name ---") + first.rawResults + third.rawResults
+                    )
+                }
+            }
+
+            // Nothing worked — return the original empty result so the debug card shows the original attempt.
+            first
+        }
+
     suspend fun search(signInfo: SignInfo, address: AddressInfo): SearchResult =
         withContext(Dispatchers.IO) {
             val queryParts = mutableListOf<String>()
@@ -49,7 +90,11 @@ class ListingSearchService {
             address.city?.let { queryParts.add(it) }
             signInfo.agencyName?.let { queryParts.add(it) }
             signInfo.referenceNumber?.let { queryParts.add(it) }
-            if (address.postalCode == null && address.city == null) {
+            // Phone number is a high-signal secondary key (agencies keep the same number across
+            // listings), so include it whenever the geocoded address is weak — not only when BOTH
+            // postal code AND city are missing, which was too restrictive.
+            val addressWeak = address.postalCode == null || address.city == null
+            if (addressWeak) {
                 signInfo.phoneNumber?.let { queryParts.add(it.replace(" ", "")) }
             }
 
@@ -134,13 +179,16 @@ class ListingSearchService {
                             val snippet = obj["snippet"]?.jsonPrimitive?.content ?: ""
                             val source = detectSource(url, agencyDomain)
                             if (source != "other") {
-                                // Validate URL actually exists (Gemini often hallucinates URLs)
+                                // Validate URL actually exists (Gemini often hallucinates URLs).
+                                // HEAD is rejected by several listing sites (405/403) — treat those
+                                // as "probably valid, site blocks HEAD" rather than dropping.
+                                // Only hard-fail on 404 or network errors.
                                 val valid = try {
                                     val headReq = Request.Builder().url(url).head().build()
                                     val headResp = quickClient.newCall(headReq).execute()
                                     val code = headResp.code
                                     headResp.close()
-                                    code in 200..399
+                                    code in 200..399 || code == 403 || code == 405
                                 } catch (_: Exception) { false }
                                 if (valid) {
                                     candidates.add(ListingCandidate(title = title, url = url, snippet = snippet, source = source))

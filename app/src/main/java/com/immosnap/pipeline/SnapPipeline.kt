@@ -54,7 +54,7 @@ class SnapPipeline(context: Context) {
             debugAddress = listOfNotNull(address.street, address.postalCode, address.city).joinToString(", ")
 
             _state.value = PipelineState.Processing("Searching listings...")
-            val searchResult = listingSearchService.search(signInfo, address)
+            val searchResult = listingSearchService.searchWithFallback(signInfo, address)
             debugQuery = searchResult.query
 
             if (searchResult.candidates.isEmpty()) {

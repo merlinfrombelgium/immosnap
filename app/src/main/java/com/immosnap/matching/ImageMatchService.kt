@@ -7,16 +7,24 @@ import com.google.ai.client.generativeai.type.content
 import com.immosnap.BuildConfig
 import com.immosnap.search.AddressInfo
 import com.immosnap.search.ListingCandidate
+import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.*
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
+import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 class ImageMatchService {
 
@@ -40,7 +48,9 @@ class ImageMatchService {
         // Step 1: Scrape images from every listing page in parallel. Previously this was a
         // serial .map { scrapeListingImages() } that blocked on each page one after another,
         // turning "5 slow listing pages" into wall-clock minutes. withTimeoutOrNull caps each
-        // scrape at 12s so one unresponsive page can't drag the whole pipeline down.
+        // scrape at 12s AND propagates cancellation into the underlying OkHttp Call via
+        // suspendCancellableCoroutine + invokeOnCancellation, so a slow page actually releases
+        // its socket when the timeout fires instead of lingering in the background thread pool.
         val enriched = coroutineScope {
             candidates.map { candidate ->
                 async {
@@ -53,7 +63,7 @@ class ImageMatchService {
         }
 
         // Step 2: Download up to IMAGES_PER_CANDIDATE images per candidate, fully in parallel
-        // across candidates AND across images-within-candidate. Same withTimeoutOrNull guard.
+        // across candidates AND across images-within-candidate. Same cancellable-on-timeout guard.
         val candidateImages = coroutineScope {
             enriched.map { candidate ->
                 async {
@@ -169,14 +179,14 @@ class ImageMatchService {
         }
     }
 
-    private fun scrapeListingImages(url: String): List<String> {
+    private suspend fun scrapeListingImages(url: String): List<String> {
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0")
             .build()
-        val response = httpClient.newCall(request).execute()
-        val html = response.body?.string() ?: return emptyList()
-        response.close()
+        val html = httpClient.newCall(request).awaitResponse().use { response ->
+            response.body?.string() ?: return emptyList()
+        }
 
         if (html.contains("captcha-delivery") || html.contains("Please enable JS")) {
             return emptyList()
@@ -219,14 +229,38 @@ class ImageMatchService {
         return images.take(8)
     }
 
-    private fun downloadImage(url: String): Bitmap {
+    private suspend fun downloadImage(url: String): Bitmap {
         val request = Request.Builder().url(url).build()
-        httpClient.newCall(request).execute().use { response ->
+        return httpClient.newCall(request).awaitResponse().use { response ->
             val bytes = response.body?.bytes() ?: error("empty image body")
-            return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                 ?: error("BitmapFactory could not decode ${bytes.size} bytes from $url")
         }
     }
+
+    /**
+     * Suspending bridge to OkHttp [Call.enqueue]. The crucial difference vs the old blocking
+     * `.execute()` path is [invokeOnCancellation]: when the surrounding coroutine is cancelled
+     * (e.g. by [withTimeoutOrNull]), we explicitly call `Call.cancel()` so OkHttp aborts the
+     * underlying socket immediately instead of letting the worker thread keep blocking until
+     * its own connect/read timeout fires. That is what makes the parallel timeouts in
+     * [rankCandidates] real instead of cosmetic.
+     */
+    private suspend fun Call.awaitResponse(): Response =
+        suspendCancellableCoroutine { cont: CancellableContinuation<Response> ->
+            cont.invokeOnCancellation {
+                runCatching { cancel() }
+            }
+            enqueue(object : Callback {
+                override fun onResponse(call: Call, response: Response) {
+                    cont.resume(response)
+                }
+
+                override fun onFailure(call: Call, e: IOException) {
+                    if (cont.isActive) cont.resumeWithException(e)
+                }
+            })
+        }
 
     /**
      * Extract the outermost JSON array from [text] using a bracket-depth counter. Robust to

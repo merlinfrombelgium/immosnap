@@ -15,6 +15,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -23,9 +24,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 
 class MainActivity : ComponentActivity() {
 
+    /**
+     * The set of permissions we actually request at startup. CAMERA and ACCESS_FINE_LOCATION
+     * are load-bearing — the app cannot function without them. ACCESS_MEDIA_LOCATION is a
+     * nice-to-have that lets the gallery picker read EXIF GPS from photos; denying it just
+     * means gallery snaps fall back to no-location behaviour, which is still a working path.
+     */
     private val requiredPermissions: Array<String>
         get() {
             val perms = mutableListOf(
@@ -38,6 +48,10 @@ class MainActivity : ComponentActivity() {
             return perms.toTypedArray()
         }
 
+    /**
+     * Only checks the two load-bearing permissions — see [requiredPermissions] for why
+     * ACCESS_MEDIA_LOCATION is intentionally not part of this gate.
+     */
     private fun hasRequiredPermissions(): Boolean =
         checkSelfPermission(Manifest.permission.CAMERA) ==
             PackageManager.PERMISSION_GRANTED &&
@@ -58,6 +72,21 @@ class MainActivity : ComponentActivity() {
                         // Re-check instead of trusting the result map: the user might have granted
                         // only a subset, or the OS might have auto-granted previously-granted perms.
                         permissionsGranted = hasRequiredPermissions()
+                    }
+
+                    // Re-check permissions on every ON_RESUME — the user might have toggled perms
+                    // off in system Settings while the app was backgrounded, in which case we need
+                    // to drop back to the permissions screen rather than blindly keep the camera
+                    // open and crash at runtime.
+                    val lifecycleOwner = LocalLifecycleOwner.current
+                    DisposableEffect(lifecycleOwner) {
+                        val observer = LifecycleEventObserver { _, event ->
+                            if (event == Lifecycle.Event.ON_RESUME) {
+                                permissionsGranted = hasRequiredPermissions()
+                            }
+                        }
+                        lifecycleOwner.lifecycle.addObserver(observer)
+                        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
                     }
 
                     LaunchedEffect(Unit) {

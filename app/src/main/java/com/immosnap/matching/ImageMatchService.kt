@@ -8,7 +8,11 @@ import com.immosnap.BuildConfig
 import com.immosnap.search.AddressInfo
 import com.immosnap.search.ListingCandidate
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.*
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -33,22 +37,39 @@ class ImageMatchService {
     ): List<MatchResult> = withContext(Dispatchers.IO) {
         if (candidates.isEmpty()) return@withContext emptyList()
 
-        // Step 1: Try to scrape images from each listing page
-        val enriched = candidates.map { candidate ->
-            try {
-                val images = scrapeListingImages(candidate.url)
-                candidate.copy(imageUrls = images, thumbnailUrl = images.firstOrNull())
-            } catch (_: Exception) {
-                candidate
-            }
+        // Step 1: Scrape images from every listing page in parallel. Previously this was a
+        // serial .map { scrapeListingImages() } that blocked on each page one after another,
+        // turning "5 slow listing pages" into wall-clock minutes. withTimeoutOrNull caps each
+        // scrape at 12s so one unresponsive page can't drag the whole pipeline down.
+        val enriched = coroutineScope {
+            candidates.map { candidate ->
+                async {
+                    val images = withTimeoutOrNull(SCRAPE_TIMEOUT_MS) {
+                        try { scrapeListingImages(candidate.url) } catch (_: Exception) { emptyList() }
+                    }.orEmpty()
+                    candidate.copy(imageUrls = images, thumbnailUrl = images.firstOrNull())
+                }
+            }.awaitAll()
         }
 
-        // Step 2: Download available images
-        val candidateImages = enriched.map { candidate ->
-            val bitmaps = candidate.imageUrls.take(5).mapNotNull { url ->
-                try { downloadImage(url) } catch (_: Exception) { null }
-            }
-            candidate to bitmaps
+        // Step 2: Download up to IMAGES_PER_CANDIDATE images per candidate, fully in parallel
+        // across candidates AND across images-within-candidate. Same withTimeoutOrNull guard.
+        val candidateImages = coroutineScope {
+            enriched.map { candidate ->
+                async {
+                    val bitmaps = candidate.imageUrls.take(IMAGES_PER_CANDIDATE)
+                        .map { url ->
+                            async {
+                                withTimeoutOrNull(DOWNLOAD_TIMEOUT_MS) {
+                                    try { downloadImage(url) } catch (_: Exception) { null }
+                                }
+                            }
+                        }
+                        .awaitAll()
+                        .filterNotNull()
+                    candidate to bitmaps
+                }
+            }.awaitAll()
         }
 
         val hasAnyImages = candidateImages.any { it.second.isNotEmpty() }
@@ -104,9 +125,21 @@ class ImageMatchService {
                 MatchResult(it, 0.5f, "Gemini returned no response")
             }
 
-            val jsonText = text.replace("```json", "").replace("```", "").trim()
-                .let { s -> s.substringAfter("[").substringBefore("]").let { "[$it]" } }
-            val results = Json.parseToJsonElement(jsonText).jsonArray
+            // Strip markdown fences, then extract the outermost JSON array using balanced brackets.
+            // The old substringAfter("[")/substringBefore("]") approach broke as soon as the
+            // "reasoning" field contained a literal "]" character, which happens routinely.
+            val jsonText = extractJsonArray(
+                text.replace("```json", "").replace("```", "").trim()
+            ) ?: return@withContext enriched.map {
+                MatchResult(it, 0.5f, "Gemini returned no usable JSON")
+            }
+            val results = try {
+                Json.parseToJsonElement(jsonText).jsonArray
+            } catch (_: Exception) {
+                return@withContext enriched.map {
+                    MatchResult(it, 0.5f, "Gemini JSON parse failed")
+                }
+            }
 
             val scoreMap = mutableMapOf<Int, Triple<Float, Int, String>>()
             results.forEach { elem ->
@@ -188,8 +221,48 @@ class ImageMatchService {
 
     private fun downloadImage(url: String): Bitmap {
         val request = Request.Builder().url(url).build()
-        val response = httpClient.newCall(request).execute()
-        val bytes = response.body!!.bytes()
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        httpClient.newCall(request).execute().use { response ->
+            val bytes = response.body?.bytes() ?: error("empty image body")
+            return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                ?: error("BitmapFactory could not decode ${bytes.size} bytes from $url")
+        }
+    }
+
+    /**
+     * Extract the outermost JSON array from [text] using a bracket-depth counter. Robust to
+     * stray `]` characters inside string fields (which is the common case for Gemini responses
+     * where the reasoning field describes matches using "(]" characters etc.).
+     * Returns null if no balanced array is found.
+     */
+    private fun extractJsonArray(text: String): String? {
+        val start = text.indexOf('[')
+        if (start == -1) return null
+        var depth = 0
+        var inString = false
+        var escape = false
+        for (i in start until text.length) {
+            val c = text[i]
+            if (escape) { escape = false; continue }
+            if (c == '\\') { escape = true; continue }
+            if (c == '"') { inString = !inString; continue }
+            if (inString) continue
+            when (c) {
+                '[' -> depth++
+                ']' -> {
+                    depth--
+                    if (depth == 0) return text.substring(start, i + 1)
+                }
+            }
+        }
+        return null
+    }
+
+    companion object {
+        /** Cap on how long we wait for any one listing page to return HTML. */
+        private const val SCRAPE_TIMEOUT_MS: Long = 12_000L
+        /** Cap on how long we wait for any one image to download. */
+        private const val DOWNLOAD_TIMEOUT_MS: Long = 10_000L
+        /** Max images per candidate we fetch and ship to Gemini for ranking. */
+        private const val IMAGES_PER_CANDIDATE: Int = 5
     }
 }

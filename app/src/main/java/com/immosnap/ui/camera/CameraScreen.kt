@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -38,6 +39,8 @@ fun CameraScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val imageCapture = remember { ImageCapture.Builder().build() }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     val galleryLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
@@ -119,7 +122,14 @@ fun CameraScreen(
                                 image.close()
                                 onPhotoTaken(bitmap)
                             }
-                            override fun onError(exception: ImageCaptureException) {}
+                            override fun onError(exception: ImageCaptureException) {
+                                // Surface the failure instead of silently doing nothing.
+                                scope.launch {
+                                    snackbarHostState.showSnackbar(
+                                        "Camera capture failed: ${exception.message ?: exception.imageCaptureError}"
+                                    )
+                                }
+                            }
                         }
                     )
                 },
@@ -128,5 +138,10 @@ fun CameraScreen(
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
             ) {}
         }
+
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier.align(Alignment.TopCenter)
+        )
     }
 }

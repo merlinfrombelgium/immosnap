@@ -15,10 +15,14 @@ import java.util.concurrent.TimeUnit
 /**
  * Reverse geocodes a lat/lng pair to a Belgian address using the Google Maps Geocoding API.
  *
- * Returns a blank [AddressInfo] (all nulls) on any failure — network, bad status, malformed
- * JSON, missing fields — rather than throwing. The pipeline treats a missing address as a
- * weaker signal and falls back to the OCR data, which is much better than the whole snap
- * crashing because a single field wasn't where we expected it to be in the JSON.
+ * Returns an [AddressInfo] whose address fields are null on any failure — network, bad
+ * status, malformed JSON, missing fields — rather than throwing. The pipeline treats a
+ * missing address as a weaker signal and falls back to OCR-only search, which is much
+ * better than the whole snap crashing because a single field wasn't where we expected.
+ *
+ * When the failure is a "real" outage (HTTP error, parse error, network exception), the
+ * reason is captured into [AddressInfo.error] so the result screen's debug card can show
+ * the user what happened rather than silently masking a quota / auth / key misconfiguration.
  */
 class GeocodingService {
 
@@ -34,23 +38,34 @@ class GeocodingService {
         val body = try {
             val request = Request.Builder().url(url).build()
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext BLANK
-                response.body?.string() ?: return@withContext BLANK
+                if (!response.isSuccessful) {
+                    return@withContext errorAddress("HTTP ${response.code} from Maps Geocoding API")
+                }
+                response.body?.string()
+                    ?: return@withContext errorAddress("Empty body from Maps Geocoding API")
             }
-        } catch (_: Exception) {
-            return@withContext BLANK
+        } catch (e: Exception) {
+            return@withContext errorAddress("Maps request failed: ${e.message ?: e.javaClass.simpleName}")
         }
 
         val root = try {
             Json.parseToJsonElement(body).jsonObject
-        } catch (_: Exception) {
-            return@withContext BLANK
+        } catch (e: Exception) {
+            return@withContext errorAddress("Maps response was not JSON: ${e.message ?: e.javaClass.simpleName}")
+        }
+
+        // Google Maps returns a top-level status field. Anything other than OK is a real problem
+        // the user should see (REQUEST_DENIED, OVER_QUERY_LIMIT, INVALID_REQUEST, etc.).
+        val status = root["status"]?.jsonPrimitive?.contentOrNull
+        if (status != null && status != "OK" && status != "ZERO_RESULTS") {
+            val apiMessage = root["error_message"]?.jsonPrimitive?.contentOrNull
+            return@withContext errorAddress("Maps status=$status${apiMessage?.let { ": $it" } ?: ""}")
         }
 
         val components = root["results"]?.jsonArray
             ?.firstOrNull()?.jsonObject
             ?.get("address_components")?.jsonArray
-            ?: return@withContext BLANK
+            ?: return@withContext AddressInfo(null, null, null) // ZERO_RESULTS: not an error
 
         var street: String? = null
         var postalCode: String? = null
@@ -71,7 +86,6 @@ class GeocodingService {
         AddressInfo(street, postalCode, city)
     }
 
-    private companion object {
-        val BLANK = AddressInfo(null, null, null)
-    }
+    private fun errorAddress(message: String): AddressInfo =
+        AddressInfo(null, null, null, error = message)
 }

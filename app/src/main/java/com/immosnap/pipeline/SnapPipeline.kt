@@ -58,8 +58,15 @@ class SnapPipeline(context: Context) {
             debugQuery = searchResult.query
 
             if (searchResult.candidates.isEmpty()) {
+                // Combine any geocoding error with any search error so the debug card surfaces
+                // the real root cause — "Maps quota exceeded" is much more actionable than a
+                // generic "No listings found nearby".
+                val combinedError = listOfNotNull(
+                    address.error?.let { "geocode: $it" },
+                    searchResult.error
+                ).takeIf { it.isNotEmpty() }?.joinToString(" | ")
                 val debug = DebugInfo(debugOcrText, debugAgencyName, debugRefNumber, debugLat, debugLng, debugAddress, debugQuery, debugLocationSource,
-                    searchResults = searchResult.rawResults, searchError = searchResult.error)
+                    searchResults = searchResult.rawResults, searchError = combinedError)
                 DebugReporter.send(debug)
                 _state.value = PipelineState.Error("No listings found nearby", debug)
                 return

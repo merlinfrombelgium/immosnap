@@ -82,9 +82,9 @@ Without these, the app shows a "permissions required" screen.
 
 | Symptom | Likely cause |
 |---------|--------------|
-| "No listings found" | Gemini grounding returned nothing for the address. Check the debug card at the bottom of the screen — if OCR got the agency name and the address looks right, the listing may not be publicly indexed. |
-| Hangs on "Finding address..." | GPS lock is slow or disabled. Use the gallery picker with a photo that has EXIF GPS instead. |
-| Permissions screen never goes away | Force-stop and relaunch the app. |
+| "No listings found" | Gemini grounding returned nothing, even after the built-in fallback chain (drop street → drop agency). Check the debug card — if OCR got the agency name and the address looks right, the listing may not be publicly indexed. |
+| Times out on "Finding address..." | GPS lock failed after 15s. The error message will suggest the gallery picker — pick a photo with EXIF GPS instead. |
+| Permissions screen keeps showing | Tap the **Grant permissions** button on the fallback screen to retry the system dialog. If you previously denied a permission, you may need to enable it in Settings → Apps → ImmoSnap. |
 | Wrong listing as top match | The image-matching stage had poor signal (building photos not scraped, listing site blocks bots). Tap through the top-3 fallback. |
 
 The **debug card** on the result screen shows OCR text, agency name, GPS, resolved address, the Gemini search query, and all candidate URLs with verification status. Use it to diagnose pipeline failures.

@@ -23,9 +23,15 @@ android {
             val props = Properties().apply { load(localProps.inputStream()) }
             buildConfigField("String", "MAPS_API_KEY", "\"${props["MAPS_API_KEY"] ?: ""}\"")
             buildConfigField("String", "GEMINI_API_KEY", "\"${props["GEMINI_API_KEY"] ?: ""}\"")
+            buildConfigField(
+                "String",
+                "DEBUG_SERVER_URL",
+                "\"${props["DEBUG_SERVER_URL"] ?: ""}\""
+            )
         } else {
             buildConfigField("String", "MAPS_API_KEY", "\"\"")
             buildConfigField("String", "GEMINI_API_KEY", "\"\"")
+            buildConfigField("String", "DEBUG_SERVER_URL", "\"\"")
         }
     }
 

@@ -22,13 +22,9 @@ android {
         if (localProps.exists()) {
             val props = Properties().apply { load(localProps.inputStream()) }
             buildConfigField("String", "MAPS_API_KEY", "\"${props["MAPS_API_KEY"] ?: ""}\"")
-            buildConfigField("String", "SEARCH_API_KEY", "\"${props["SEARCH_API_KEY"] ?: ""}\"")
-            buildConfigField("String", "SEARCH_ENGINE_ID", "\"${props["SEARCH_ENGINE_ID"] ?: ""}\"")
             buildConfigField("String", "GEMINI_API_KEY", "\"${props["GEMINI_API_KEY"] ?: ""}\"")
         } else {
             buildConfigField("String", "MAPS_API_KEY", "\"\"")
-            buildConfigField("String", "SEARCH_API_KEY", "\"\"")
-            buildConfigField("String", "SEARCH_ENGINE_ID", "\"\"")
             buildConfigField("String", "GEMINI_API_KEY", "\"\"")
         }
     }
@@ -65,7 +61,6 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.4.1")
     implementation("androidx.camera:camera-view:1.4.1")
 
-    implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation("com.google.android.gms:play-services-location:21.3.0")
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
